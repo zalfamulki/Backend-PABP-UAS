@@ -120,4 +120,23 @@ class AuthController extends Controller
             'user' => Auth::guard('api')->user()->load('store'),
         ]);
     }
+
+    public function updateProfile(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+        
+        $validated = $request->validate([
+            'name' => 'string|max:255',
+            'phone' => 'nullable|string|max:20',
+            'address' => 'nullable|string',
+        ]);
+
+        $user->update($validated);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Profile updated successfully',
+            'user' => $user->load('store'),
+        ]);
+    }
 }

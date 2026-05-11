@@ -19,4 +19,8 @@ class MenuItem extends Model
         'is_available',
         'stock',
     ];
+    public function store()
+    {
+        return $this->belongsTo(Store::class);
+    }
 }

@@ -9,7 +9,7 @@ class MenuItemController extends Controller
 {
     public function index(Request $request)
     {
-        $query = MenuItem::query();
+        $query = MenuItem::with('store');
         if ($request->has('store_id')) {
             $query->where('store_id', $request->store_id);
         }
@@ -19,8 +19,10 @@ class MenuItemController extends Controller
 
     public function store(Request $request)
     {
+        $user = \Illuminate\Support\Facades\Auth::user();
+        $store = \App\Models\Store::where('user_id', $user->id)->firstOrFail();
+
         $validated = $request->validate([
-            'store_id' => 'required|integer',
             'name' => 'required|string',
             'price' => 'required|numeric',
             'category' => 'required|string',
@@ -31,7 +33,12 @@ class MenuItemController extends Controller
             'stock' => 'nullable|integer',
         ]);
 
+        $validated['store_id'] = $store->id;
+
         $menu = MenuItem::create($validated);
+        // Load the store relationship for the response
+        $menu->load('store');
+        
         return response()->json(['data' => $menu, 'message' => 'Menu item created successfully'], 201);
     }
 

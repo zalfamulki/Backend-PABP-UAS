@@ -29,6 +29,7 @@ class StoreController extends Controller
         $validated = $request->validate([
             'store_name' => 'string|max:255',
             'location' => 'string|max:255',
+            'phone' => 'nullable|string|max:20',
             'is_open' => 'boolean',
         ]);
 

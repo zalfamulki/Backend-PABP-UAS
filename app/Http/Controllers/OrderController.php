@@ -15,6 +15,16 @@ class OrderController extends Controller
     {
         $query = Order::with(['items.menu', 'queue', 'user']);
         
+        // If the user is a seller, restrict to their store
+        if (Auth::check()) {
+            $user = Auth::user();
+            $store = \App\Models\Store::where('user_id', $user->id)->first();
+            if ($store) {
+                $query->where('store_id', $store->id);
+            }
+        }
+        
+        // Allow filtering by specific store_id if provided (and user has access)
         if ($request->has('store_id')) {
             $query->where('store_id', $request->store_id);
         }
@@ -39,56 +49,67 @@ class OrderController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'store_id' => 'required|integer',
-            'total_price' => 'required|numeric',
-            'notes' => 'nullable|string',
             'items' => 'required|array',
             'items.*.menu_id' => 'required|integer',
             'items.*.quantity' => 'required|integer',
             'items.*.subtotal' => 'required|numeric',
         ]);
 
+        // Group items by store_id
+        $itemsByStore = [];
+        foreach ($request->items as $item) {
+            $menuItem = \App\Models\MenuItem::find($item['menu_id']);
+            if (!$menuItem) continue;
+            
+            $itemsByStore[$menuItem->store_id][] = [
+                'menu_id' => $item['menu_id'],
+                'quantity' => $item['quantity'],
+                'subtotal' => $item['subtotal'],
+                'menuItem' => $menuItem
+            ];
+        }
+
         DB::beginTransaction();
         try {
-            $order = Order::create([
-                'user_id' => Auth::id(),
-                'store_id' => $request->store_id,
-                'total_price' => $request->total_price,
-                'status' => 'pending',
-                'notes' => $request->notes,
-            ]);
-
-            foreach ($request->items as $item) {
-                $menuItem = \App\Models\MenuItem::find($item['menu_id']);
+            $createdOrders = [];
+            foreach ($itemsByStore as $storeId => $items) {
+                $totalPrice = array_sum(array_column($items, 'subtotal'));
                 
-                if (!$menuItem || $menuItem->stock < $item['quantity']) {
-                    throw new \Exception("Insufficient stock for item: " . ($menuItem ? $menuItem->name : "Unknown"));
-                }
-
-                OrderItem::create([
-                    'order_id' => $order->id,
-                    'menu_id' => $item['menu_id'],
-                    'quantity' => $item['quantity'],
-                    'subtotal' => $item['subtotal']
+                $order = Order::create([
+                    'user_id' => Auth::id(),
+                    'store_id' => $storeId,
+                    'total_price' => $totalPrice,
+                    'status' => 'pending',
+                    'notes' => $request->notes,
                 ]);
 
-                // Decrement stock immediately
-                $menuItem->decrement('stock', $item['quantity']);
+                foreach ($items as $item) {
+                    if ($item['menuItem']->stock < $item['quantity']) {
+                        throw new \Exception("Insufficient stock for item: " . $item['menuItem']->name);
+                    }
+
+                    OrderItem::create([
+                        'order_id' => $order->id,
+                        'menu_id' => $item['menu_id'],
+                        'quantity' => $item['quantity'],
+                        'subtotal' => $item['subtotal']
+                    ]);
+                    $item['menuItem']->decrement('stock', $item['quantity']);
+                }
+
+                $lastQueue = Queue::where('store_id', $storeId)->max('queue_position');
+                Queue::create([
+                    'order_id' => $order->id,
+                    'store_id' => $storeId,
+                    'queue_position' => ($lastQueue ?? 0) + 1,
+                    'status' => 'waiting',
+                ]);
+                
+                $createdOrders[] = $order->load(['items.menu', 'queue', 'user']);
             }
 
-            // Create queue entry
-            $lastQueue = Queue::where('store_id', $request->store_id)->max('queue_position');
-            $nextPos = $lastQueue ? $lastQueue + 1 : 1;
-            
-            Queue::create([
-                'order_id' => $order->id,
-                'store_id' => $request->store_id,
-                'queue_position' => $nextPos,
-                'status' => 'waiting',
-            ]);
-
             DB::commit();
-            return response()->json(['data' => $order->load(['items.menu', 'queue', 'user']), 'message' => 'Order created and queued successfully'], 201);
+            return response()->json(['data' => $createdOrders, 'message' => 'Orders created successfully'], 201);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['message' => 'Failed to create order', 'error' => $e->getMessage()], 500);
