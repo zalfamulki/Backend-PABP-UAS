@@ -15,16 +15,21 @@ class OrderController extends Controller
     {
         $query = Order::with(['items.menu', 'queue', 'user']);
         
-        // If the user is a seller, restrict to their store
         if (Auth::check()) {
             $user = Auth::user();
+            // Check if user is a seller
             $store = \App\Models\Store::where('user_id', $user->id)->first();
+            
             if ($store) {
+                // Sellers see orders for their store
                 $query->where('store_id', $store->id);
+            } else {
+                // Customers see only their own orders
+                $query->where('user_id', $user->id);
             }
         }
         
-        // Allow filtering by specific store_id if provided (and user has access)
+        // Allow explicit filtering by specific store_id or user_id if provided
         if ($request->has('store_id')) {
             $query->where('store_id', $request->store_id);
         }
@@ -123,24 +128,34 @@ class OrderController extends Controller
             return response()->json(['message' => 'Order not found'], 404);
         }
 
-        $order->update($request->only(['status']));
-        
-        // If order status changes, update queue status
-        if ($request->has('status')) {
-            $queueStatus = 'waiting';
-            switch ($request->status) {
-                case 'preparing': $queueStatus = 'processing'; break;
-                case 'pending':   $queueStatus = 'waiting'; break;
-                case 'ready':     $queueStatus = 'processing'; break; // Assuming ready means ready for pickup
-                case 'completed': $queueStatus = 'completed'; break;
-                case 'cancelled': $queueStatus = 'cancelled'; break;
-                default: $queueStatus = 'waiting'; break;
-            }
-            
-            Queue::where('order_id', $order->id)->update(['status' => $queueStatus]);
+        $validated = $request->validate([
+            'status' => 'required|string',
+            'estimated_finish_time' => 'nullable|integer'
+        ]);
+
+        $newStatus = $validated['status'];
+
+        // Logic for handling the specific preparing status flow
+        if ($newStatus === 'preparing' && $request->has('estimated_finish_time')) {
+            $order->estimated_finish_time = now()->addMinutes($validated['estimated_finish_time']);
         }
 
-        return response()->json(['data' => $order->load(['items.menu', 'queue', 'user']), 'message' => 'Order updated successfully']);
+        $order->status = $newStatus;
+        $order->save();
+        
+        // Map order status to queue status
+        $queueStatus = 'waiting';
+        switch ($newStatus) {
+            case 'preparing': $queueStatus = 'processing'; break;
+            case 'ready':     $queueStatus = 'processing'; break; 
+            case 'completed': $queueStatus = 'completed'; break;
+            case 'cancelled': $queueStatus = 'cancelled'; break;
+            default:          $queueStatus = 'waiting'; break;
+        }
+        
+        Queue::where('order_id', $order->id)->update(['status' => $queueStatus]);
+
+        return response()->json(['data' => $order->load(['items.menu', 'queue', 'user']), 'message' => 'Order status updated to ' . $newStatus]);
     }
 
     public function cancel(Request $request, $id)
@@ -159,5 +174,36 @@ class OrderController extends Controller
         }
 
         return response()->json(['data' => $order->load(['items.menu', 'queue', 'user']), 'message' => 'Order cancelled successfully']);
+    }
+
+    public function destroy($id)
+    {
+        try {
+            $order = Order::find($id);
+            if (!$order) {
+                return response()->json(['message' => 'Order not found'], 404);
+            }
+
+            $user = Auth::user();
+            
+            // Check if user is the customer who placed the order
+            $isCustomer = $order->user_id == $user->id;
+            
+            // Check if user is a seller and owns the store for this order
+            $store = \App\Models\Store::where('user_id', $user->id)->first();
+            $isSeller = $store && $order->store_id == $store->id;
+
+            if (!$isCustomer && !$isSeller) {
+                return response()->json(['message' => 'Unauthorized'], 403);
+            }
+
+            // Perform a HARD DELETE (force delete) to ensure data is completely removed
+            // and cascades to related items via DB constraints (ON DELETE CASCADE)
+            $order->forceDelete();
+            
+            return response()->json(['message' => 'Order history deleted successfully']);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Failed to delete order', 'error' => $e->getMessage()], 500);
+        }
     }
 }

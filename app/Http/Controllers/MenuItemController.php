@@ -44,7 +44,19 @@ class MenuItemController extends Controller
 
     public function update(Request $request, $id)
     {
+        $user = \Illuminate\Support\Facades\Auth::user();
+        $store = \App\Models\Store::where('user_id', $user->id)->first();
+        
         $menu = MenuItem::findOrFail($id);
+
+        // Security: Ensure the menu item belongs to the seller's store
+        if ($store && $menu->store_id !== $store->id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unauthorized: You can only update items from your own store'
+            ], 403);
+        }
+
         $validated = $request->validate([
             'name' => 'string',
             'price' => 'numeric',
@@ -62,8 +74,31 @@ class MenuItemController extends Controller
 
     public function destroy($id)
     {
-        $menu = MenuItem::findOrFail($id);
-        $menu->delete();
-        return response()->json(['message' => 'Menu item deleted successfully']);
+        try {
+            $user = \Illuminate\Support\Facades\Auth::user();
+            $store = \App\Models\Store::where('user_id', $user->id)->first();
+            
+            $menu = MenuItem::findOrFail($id);
+
+            // Security: Ensure the menu item belongs to the seller's store
+            if ($store && $menu->store_id !== $store->id) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized: You can only delete items from your own store'
+                ], 403);
+            }
+
+            $menu->delete(); // This will now soft delete
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Menu item deleted successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Gagal menghapus menu: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

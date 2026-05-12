@@ -12,6 +12,7 @@ class Store extends Model
         'user_id',
         'store_name',
         'location',
+        'phone',
         'is_open'
     ];
 
