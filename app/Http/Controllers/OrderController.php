@@ -112,6 +112,16 @@ class OrderController extends Controller
                 ]);
                 
                 $createdOrders[] = $order->load(['items.menu', 'queue', 'user']);
+
+                $storeOwner = \App\Models\Store::find($storeId)?->user;
+                if ($storeOwner) {
+                    PushNotificationController::sendToUser(
+                        $storeOwner->id,
+                        'New Order Received! 🎉',
+                        'A new order #' . $order->id . ' has been placed. Please review and accept it.',
+                        ['order_id' => $order->id, 'status' => 'pending', 'route' => '/seller/orders']
+                    );
+                }
             }
 
             DB::commit();
@@ -223,9 +233,7 @@ class OrderController extends Controller
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
 
-            // Perform a HARD DELETE (force delete) to ensure data is completely removed
-            // and cascades to related items via DB constraints (ON DELETE CASCADE)
-            $order->forceDelete();
+            $order->delete();
             
             return response()->json(['message' => 'Order history deleted successfully']);
         } catch (\Exception $e) {

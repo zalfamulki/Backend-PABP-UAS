@@ -50,43 +50,50 @@ class PushNotificationController extends Controller
 
     public static function sendToUser(int $userId, string $title, string $body, array $data = []): void
     {
-        $subscriptions = PushSubscription::where('user_id', $userId)->get();
+        try {
+            $subscriptions = PushSubscription::where('user_id', $userId)->get();
 
-        if ($subscriptions->isEmpty()) return;
+            if ($subscriptions->isEmpty()) return;
 
-        $auth = [
-            'VAPID' => [
-                'subject' => config('web-push.vapid.subject'),
-                'publicKey' => config('web-push.vapid.public_key'),
-                'privateKey' => config('web-push.vapid.private_key'),
-            ],
-        ];
+            $auth = [
+                'VAPID' => [
+                    'subject' => config('web-push.vapid.subject'),
+                    'publicKey' => config('web-push.vapid.public_key'),
+                    'privateKey' => config('web-push.vapid.private_key'),
+                ],
+            ];
 
-        $webPush = new WebPush($auth);
+            $webPush = new WebPush($auth);
 
-        $payload = json_encode([
-            'title' => $title,
-            'body' => $body,
-            'data' => $data,
-            'icon' => '/icon-192.png',
-            'badge' => '/icon-192.png',
-        ]);
-
-        foreach ($subscriptions as $sub) {
-            $subscription = Subscription::create([
-                'endpoint' => $sub->endpoint,
-                'authToken' => $sub->auth,
-                'publicKey' => $sub->p256dh,
+            $payload = json_encode([
+                'title' => $title,
+                'body' => $body,
+                'data' => $data,
+                'icon' => '/icon-192.png',
+                'badge' => '/icon-192.png',
             ]);
 
-            $webPush->queueNotification($subscription, $payload);
-        }
+            foreach ($subscriptions as $sub) {
+                $subscription = Subscription::create([
+                    'endpoint' => $sub->endpoint,
+                    'authToken' => $sub->auth,
+                    'publicKey' => $sub->p256dh,
+                ]);
 
-        foreach ($webPush->flush() as $report) {
-            if (!$report->isSuccess()) {
-                $endpoint = $report->getEndpoint();
-                PushSubscription::where('endpoint', $endpoint)->delete();
+                $webPush->queueNotification($subscription, $payload);
             }
+
+            foreach ($webPush->flush() as $report) {
+                if (!$report->isSuccess()) {
+                    $endpoint = $report->getEndpoint();
+                    PushSubscription::where('endpoint', $endpoint)->delete();
+                }
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Push notification failed: ' . $e->getMessage(), [
+                'user_id' => $userId,
+                'title' => $title,
+            ]);
         }
     }
 }

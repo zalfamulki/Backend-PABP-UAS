@@ -5,6 +5,14 @@ use Illuminate\Http\Request;
 
 define('LARAVEL_START', microtime(true));
 
+if (!getenv('OPENSSL_CONF')) {
+    $phpDir = dirname(PHP_BINARY);
+    $opensslConf = $phpDir . '\extras\ssl\openssl.cnf';
+    if (is_file($opensslConf)) {
+        putenv('OPENSSL_CONF=' . $opensslConf);
+    }
+}
+
 /*
 |--------------------------------------------------------------------------
 | Check If The Application Is Under Maintenance
