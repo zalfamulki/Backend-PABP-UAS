@@ -8,6 +8,7 @@ use App\Models\Queue;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use App\Http\Controllers\PushNotificationController;
 
 class OrderController extends Controller
 {
@@ -140,8 +141,33 @@ class OrderController extends Controller
             $order->estimated_finish_time = now()->addMinutes($validated['estimated_finish_time']);
         }
 
+        $oldStatus = $order->status;
         $order->status = $newStatus;
         $order->save();
+        
+        // Send push notification to customer on status changes
+        if ($newStatus === 'preparing' && $oldStatus !== 'preparing') {
+            PushNotificationController::sendToUser(
+                $order->user_id,
+                'Order Accepted! 🎉',
+                'Your order #' . $order->id . ' is now being prepared. We\'ll notify you when it\'s ready!',
+                ['order_id' => $order->id, 'status' => 'preparing', 'route' => '/customer/queue']
+            );
+        } elseif ($newStatus === 'ready' && $oldStatus !== 'ready') {
+            PushNotificationController::sendToUser(
+                $order->user_id,
+                'Order Ready! ✅',
+                'Your order #' . $order->id . ' is ready for pickup. Please come to the counter!',
+                ['order_id' => $order->id, 'status' => 'ready', 'route' => '/customer/queue']
+            );
+        } elseif ($newStatus === 'cancelled' && $oldStatus !== 'cancelled') {
+            PushNotificationController::sendToUser(
+                $order->user_id,
+                'Order Cancelled',
+                'Your order #' . $order->id . ' has been cancelled.',
+                ['order_id' => $order->id, 'status' => 'cancelled', 'route' => '/customer/queue']
+            );
+        }
         
         // Map order status to queue status
         $queueStatus = 'waiting';

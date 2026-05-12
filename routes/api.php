@@ -30,7 +30,8 @@ Route::get('stores', [StoreController::class, 'index']);
 Route::get('stores/{store}', [StoreController::class, 'show']);
 
 use App\Http\Controllers\SettingsController;
-// ... (previous imports)
+use App\Http\Controllers\PushNotificationController;
+
 
 // Protected routes
 Route::middleware('auth:api')->group(function () {
@@ -49,6 +50,10 @@ Route::middleware('auth:api')->group(function () {
     Route::apiResource('orders', OrderController::class);
     Route::apiResource('queues', QueueController::class);
     
+    // Push Notifications
+    Route::post('push/subscribe', [PushNotificationController::class, 'subscribe']);
+    Route::post('push/unsubscribe', [PushNotificationController::class, 'unsubscribe']);
+
     // Stores (Management)
     Route::put('stores/{store}', [StoreController::class, 'update']);
 });
