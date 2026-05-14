@@ -14,6 +14,9 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
+        // Auto-complete expired orders (estimated_finish_time passed)
+        $this->autoCompleteExpiredOrders();
+
         $query = Order::with(['items.menu', 'queue', 'user']);
         
         if (Auth::check()) {
@@ -22,8 +25,8 @@ class OrderController extends Controller
             $store = \App\Models\Store::where('user_id', $user->id)->first();
             
             if ($store) {
-                // Sellers see orders for their store
-                $query->where('store_id', $store->id);
+                // Sellers see orders for their store (including soft-deleted for revenue)
+                $query->where('store_id', $store->id)->withTrashed();
             } else {
                 // Customers see only their own orders
                 $query->where('user_id', $user->id);
@@ -41,6 +44,26 @@ class OrderController extends Controller
 
         $orders = $query->get();
         return response()->json(['data' => $orders]);
+    }
+
+    private function autoCompleteExpiredOrders()
+    {
+        $expired = Order::whereIn('status', ['preparing', 'ready'])
+            ->where('estimated_finish_time', '<', now())
+            ->get();
+
+        foreach ($expired as $order) {
+            $order->status = 'completed';
+            $order->save();
+            Queue::where('order_id', $order->id)->update(['status' => 'completed']);
+
+            PushNotificationController::sendToUser(
+                $order->user_id,
+                'Order Auto-Completed ✅',
+                'Your order #' . $order->id . ' has been automatically completed as the estimated time has passed.',
+                ['order_id' => $order->id, 'status' => 'completed', 'route' => '/customer/history']
+            );
+        }
     }
 
     public function show($id)
@@ -194,6 +217,63 @@ class OrderController extends Controller
         return response()->json(['data' => $order->load(['items.menu', 'queue', 'user']), 'message' => 'Order status updated to ' . $newStatus]);
     }
 
+    public function markItemReady(Request $request, $orderId, $itemId)
+    {
+        $order = Order::with('items')->find($orderId);
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        $item = $order->items->where('id', $itemId)->first();
+        if (!$item) {
+            return response()->json(['message' => 'Item not found'], 404);
+        }
+
+        $item->is_ready = !$item->is_ready;
+        $item->save();
+
+        // If all items are ready, auto-transition order to "ready"
+        if ($order->items->every(fn($i) => $i->is_ready)) {
+            $oldStatus = $order->status;
+            $order->status = 'ready';
+            $order->save();
+
+            Queue::where('order_id', $order->id)->update(['status' => 'processing']);
+
+            if ($oldStatus !== 'ready') {
+                PushNotificationController::sendToUser(
+                    $order->user_id,
+                    'Order Ready! ✅',
+                    'Your order #' . $order->id . ' is ready for pickup. Please come to the counter!',
+                    ['order_id' => $order->id, 'status' => 'ready', 'route' => '/customer/queue']
+                );
+            }
+
+            return response()->json([
+                'data' => $order->load(['items.menu', 'queue', 'user']),
+                'message' => 'All items ready. Order marked as ready!'
+            ]);
+        }
+
+        return response()->json([
+            'data' => $order->load(['items.menu', 'queue', 'user']),
+            'message' => 'Item readiness updated'
+        ]);
+    }
+
+    public function autoCompleteExpired()
+    {
+        $previousCount = Order::where('status', 'completed')->count();
+        $this->autoCompleteExpiredOrders();
+        $newCount = Order::where('status', 'completed')->count();
+        $count = $newCount - $previousCount;
+
+        return response()->json([
+            'message' => "Auto-completed $count expired order(s)",
+            'completed_count' => $count
+        ]);
+    }
+
     public function cancel(Request $request, $id)
     {
         $order = Order::find($id);
@@ -215,9 +295,13 @@ class OrderController extends Controller
     public function destroy($id)
     {
         try {
-            $order = Order::find($id);
+            $order = Order::withTrashed()->find($id);
             if (!$order) {
                 return response()->json(['message' => 'Order not found'], 404);
+            }
+
+            if ($order->trashed()) {
+                return response()->json(['message' => 'Order history deleted successfully']);
             }
 
             $user = Auth::user();

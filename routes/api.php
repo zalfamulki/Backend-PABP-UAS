@@ -31,6 +31,7 @@ Route::get('stores/{store}', [StoreController::class, 'show']);
 
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\PushNotificationController;
+use App\Http\Controllers\StatsController;
 
 
 // Protected routes
@@ -47,6 +48,8 @@ Route::middleware('auth:api')->group(function () {
     
     // Orders & Queues
     Route::post('orders/{order}/cancel', [OrderController::class, 'cancel']);
+    Route::post('orders/{order}/items/{item}/toggle-ready', [OrderController::class, 'markItemReady']);
+    Route::post('orders/auto-complete', [OrderController::class, 'autoCompleteExpired']);
     Route::apiResource('orders', OrderController::class);
     Route::apiResource('queues', QueueController::class);
     
@@ -56,4 +59,8 @@ Route::middleware('auth:api')->group(function () {
 
     // Stores (Management)
     Route::put('stores/{store}', [StoreController::class, 'update']);
+
+    // Stats
+    Route::get('stats/revenue', [StatsController::class, 'revenue']);
+    Route::get('stats/dashboard', [StatsController::class, 'dashboard']);
 });

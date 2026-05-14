@@ -12,7 +12,8 @@ class OrderItem extends Model
         'order_id',
         'menu_id',
         'quantity',
-        'subtotal'
+        'subtotal',
+        'is_ready'
     ];
 
     public function menu()
