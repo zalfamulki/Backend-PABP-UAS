@@ -25,8 +25,8 @@ class OrderController extends Controller
             $store = \App\Models\Store::where('user_id', $user->id)->first();
             
             if ($store) {
-                // Sellers see orders for their store (including soft-deleted for revenue)
-                $query->where('store_id', $store->id)->withTrashed();
+                // Sellers see orders for their store
+                $query->where('store_id', $store->id);
             } else {
                 // Customers see only their own orders
                 $query->where('user_id', $user->id);
